@@ -1,0 +1,41 @@
+# Environment variables
+.env
+
+# n8n data
+.n8n/
+n8n_data/
+
+# Docker volumes
+postgres_data/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Credentials backup (if exported)
+credentials_backup.json
+
+# Node modules (if using custom modules)
+node_modules/
+package-lock.json
+yarn.lock
