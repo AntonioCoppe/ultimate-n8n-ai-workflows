@@ -1,0 +1,302 @@
+{
+  "name": "RSS to Social AI with Google Sheets Logging",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://hnrss.org/frontpage",
+        "options": {}
+      },
+      "id": "2",
+      "name": "RSS Feed - HN",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Limit to first 3 items for testing\nreturn items.slice(0, 3).map(item => {\n  const json = item.json;\n  return {\n    json: {\n      title: json.title || '',\n      summary: json.description || json.contentSnippet || json.summary || '',\n      link: json.link || '',\n      pubDate: json.pubDate || json.isoDate || '',\n      feed: 'Hacker News'\n    }\n  };\n});"
+      },
+      "id": "5",
+      "name": "Pre-Process",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "text",
+        "operation": "message",
+        "text": "=Title: {{ $json.title }}\nSummary: {{ $json.summary }}\n\nRate relevance to AI automation from 0-10. Respond with ONLY a number.",
+        "options": {
+          "maxTokens": 10,
+          "temperature": 0.1
+        }
+      },
+      "id": "6",
+      "name": "OpenAI Score",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.4,
+      "position": [900, 400],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{ $credentials.openAiApi.id }}",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract score from OpenAI response\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const response = item.json.message?.content || item.json.text || '';\n  let score = parseInt(response.trim(), 10) || 0;\n  \n  score = Math.max(0, Math.min(10, score));\n  \n  const inputData = $('Pre-Process').all();\n  const originalItem = inputData[i];\n  \n  item.json = {\n    ...originalItem.json,\n    score: score,\n    aiResponse: response,\n    processedAt: new Date().toISOString()\n  };\n}\n\nreturn items;"
+      },
+      "id": "7",
+      "name": "Extract Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.score }}",
+              "operation": "largerEqual",
+              "value2": 7
+            }
+          ]
+        }
+      },
+      "id": "8",
+      "name": "IF Filter (Score >=7)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "text",
+        "operation": "message",
+        "text": "=Title: {{ $json.title }}\nSummary: {{ $json.summary }}\nLink: {{ $json.link }}\n\nGenerate concise, engaging posts for AI automation niche. Output exactly:\nTweet: [280-char text]\nLinkedIn: [longer insightful text with CTA]",
+        "options": {
+          "maxTokens": 500,
+          "temperature": 0.7
+        }
+      },
+      "id": "9",
+      "name": "OpenAI Generate Text",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.4,
+      "position": [1560, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{ $credentials.openAiApi.id }}",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract tweet and LinkedIn text\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const response = item.json.message?.content || item.json.text || '';\n  \n  let tweetText = '', linkedinText = '';\n  \n  const tweetMatch = response.match(/Tweet:\\s*([\\s\\S]*?)(?=\\nLinkedIn:|$)/i);\n  const linkedinMatch = response.match(/LinkedIn:\\s*([\\s\\S]*)$/i);\n  \n  tweetText = (tweetMatch ? tweetMatch[1].trim() : '').substring(0, 280);\n  linkedinText = linkedinMatch ? linkedinMatch[1].trim() : '';\n  \n  if (!tweetText && !linkedinText) {\n    tweetText = response.substring(0, 280);\n    linkedinText = response;\n  }\n  \n  const inputData = $('IF Filter (Score >=7)').all();\n  const originalItem = inputData[i];\n  \n  item.json = {\n    ...originalItem.json,\n    tweetText,\n    linkedinText,\n    generatedAt: new Date().toISOString()\n  };\n}\n\nreturn items;"
+      },
+      "id": "10",
+      "name": "Extract Post Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1j4_BlQAkrNhkijEBLL48nGJ6aEVzeyRy23_zuCFiqAc",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.processedAt }}",
+            "Title": "={{ $json.title }}",
+            "Link": "={{ $json.link }}",
+            "Score": "={{ $json.score }}",
+            "Feed": "={{ $json.feed }}",
+            "Tweet": "={{ $json.tweetText }}",
+            "LinkedIn": "={{ $json.linkedinText }}",
+            "Status": "=Ready to Post",
+            "Posted": "=FALSE"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "11",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2000, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "{{ $credentials.googleSheetsOAuth2Api.id }}",
+          "name": "Google Sheets Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1j4_BlQAkrNhkijEBLL48nGJ6aEVzeyRy23_zuCFiqAc",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.processedAt }}",
+            "Title": "={{ $json.title }}",
+            "Link": "={{ $json.link }}",
+            "Score": "={{ $json.score }}",
+            "Feed": "={{ $json.feed }}",
+            "Tweet": "=",
+            "LinkedIn": "=",
+            "Status": "=Filtered (Score < 7)",
+            "Posted": "=FALSE"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "17",
+      "name": "Log Filtered to Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1560, 500],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "{{ $credentials.googleSheetsOAuth2Api.id }}",
+          "name": "Google Sheets Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "result",
+              "value": "=✅ Logged {{ $json.title }}"
+            },
+            {
+              "name": "score",
+              "value": "={{ $json.score }}"
+            },
+            {
+              "name": "status",
+              "value": "=Ready to post"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "18",
+      "name": "Success Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "result",
+              "value": "=❌ Filtered: {{ $json.title }}"
+            },
+            {
+              "name": "score",
+              "value": "={{ $json.score }}"
+            },
+            {
+              "name": "status",
+              "value": "=Score too low"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "19",
+      "name": "Filtered Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1780, 500]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{"node": "RSS Feed - HN", "type": "main", "index": 0}]]
+    },
+    "RSS Feed - HN": {
+      "main": [[{"node": "Pre-Process", "type": "main", "index": 0}]]
+    },
+    "Pre-Process": {
+      "main": [[{"node": "OpenAI Score", "type": "main", "index": 0}]]
+    },
+    "OpenAI Score": {
+      "main": [[{"node": "Extract Score", "type": "main", "index": 0}]]
+    },
+    "Extract Score": {
+      "main": [[{"node": "IF Filter (Score >=7)", "type": "main", "index": 0}]]
+    },
+    "IF Filter (Score >=7)": {
+      "main": [
+        [{"node": "OpenAI Generate Text", "type": "main", "index": 0}],
+        [{"node": "Log Filtered to Sheets", "type": "main", "index": 0}]
+      ]
+    },
+    "OpenAI Generate Text": {
+      "main": [[{"node": "Extract Post Text", "type": "main", "index": 0}]]
+    },
+    "Extract Post Text": {
+      "main": [[{"node": "Log to Google Sheets", "type": "main", "index": 0}]]
+    },
+    "Log to Google Sheets": {
+      "main": [[{"node": "Success Output", "type": "main", "index": 0}]]
+    },
+    "Log Filtered to Sheets": {
+      "main": [[{"node": "Filtered Output", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-02T00:00:00.000Z",
+  "versionId": 1
+}
