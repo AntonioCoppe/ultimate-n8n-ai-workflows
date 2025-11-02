@@ -1,0 +1,337 @@
+{
+  "name": "RSS to Social AI Automation (Fixed)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "hours", "hoursInterval": 1}]
+        }
+      },
+      "id": "1",
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://example.com/rss-feed1.xml",
+        "options": {}
+      },
+      "id": "2",
+      "name": "RSS Feed 1",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [460, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://example.com/rss-feed2.xml",
+        "options": {}
+      },
+      "id": "3",
+      "name": "RSS Feed 2",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "4",
+      "name": "Merge RSS",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const json = item.json;\n  return {\n    json: {\n      title: json.title || '',\n      summary: json.description || json.contentSnippet || json.summary || '',\n      link: json.link || '',\n      pubDate: json.pubDate || json.isoDate || '',\n      feed: json.meta?.title || json.feedTitle || 'Unknown'\n    }\n  };\n});"
+      },
+      "id": "5",
+      "name": "Pre-Process",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "modelId": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a scorer for AI automation news. Respond ONLY with a number 0-10."
+            },
+            {
+              "role": "user",
+              "content": "=Title: {{ $json.title }}\nSummary: {{ $json.summary }}\nRate relevance to AI automation (0-10):"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 10,
+          "temperature": 0.1
+        }
+      },
+      "id": "6",
+      "name": "OpenAI Score",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [1120, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-placeholder",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract score from OpenAI response\nfor (const item of items) {\n  const response = item.json.choices?.[0]?.message?.content || item.json.text || '';\n  let score = parseInt(response.trim(), 10) || 0;\n  \n  // Ensure score is between 0-10\n  score = Math.max(0, Math.min(10, score));\n  \n  // Get original data from previous node\n  const inputData = $('Pre-Process').all();\n  const originalItem = inputData[items.indexOf(item)];\n  \n  item.json = {\n    ...originalItem.json,\n    score: score\n  };\n}\n\nreturn items;"
+      },
+      "id": "7",
+      "name": "Extract Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.score }}",
+              "operation": "largerEqual",
+              "value2": 7
+            }
+          ]
+        }
+      },
+      "id": "8",
+      "name": "IF Filter (Score >=7)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "modelId": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Generate concise, engaging posts for AI automation niche. Output exactly:\nTweet: [280-char text]\nLinkedIn: [longer insightful text with CTA]"
+            },
+            {
+              "role": "user",
+              "content": "=Title: {{ $json.title }}\nSummary: {{ $json.summary }}\nLink: {{ $json.link }}\nGenerate posts:"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 500,
+          "temperature": 0.7
+        }
+      },
+      "id": "9",
+      "name": "OpenAI Generate Text",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [1780, 200],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-placeholder",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract tweet and LinkedIn text\nfor (const item of items) {\n  const response = item.json.choices?.[0]?.message?.content || item.json.text || '';\n  \n  let tweetText = '', linkedinText = '';\n  \n  const tweetMatch = response.match(/Tweet:\\s*([\\s\\S]*?)(?=\\nLinkedIn:|$)/i);\n  const linkedinMatch = response.match(/LinkedIn:\\s*([\\s\\S]*)$/i);\n  \n  tweetText = (tweetMatch ? tweetMatch[1].trim() : '').substring(0, 280);\n  linkedinText = linkedinMatch ? linkedinMatch[1].trim() : '';\n  \n  // Fallback if regex doesn't match\n  if (!tweetText && !linkedinText) {\n    tweetText = response.substring(0, 280);\n    linkedinText = response;\n  }\n  \n  // Get original data\n  const inputData = $('IF Filter (Score >=7)').all();\n  const originalItem = inputData[items.indexOf(item)];\n  \n  item.json = {\n    ...originalItem.json,\n    tweetText,\n    linkedinText\n  };\n}\n\nreturn items;"
+      },
+      "id": "10",
+      "name": "Extract Post Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "generate",
+        "modelId": "dall-e-3",
+        "prompt": "=Vibrant professional image for AI automation news: '{{ $json.title }}'. Modern tech illustration, high-res, no text.",
+        "options": {
+          "size": "1024x1024",
+          "quality": "standard"
+        }
+      },
+      "id": "11",
+      "name": "OpenAI Generate Image",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [1780, 400],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-placeholder",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition"
+      },
+      "id": "12",
+      "name": "Merge Text & Image",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "13",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "text": "={{ $json.tweetText }} {{ $json.link }} #AIAutomation",
+        "additionalFields": {
+          "media": "={{ $json.data?.[0]?.url }}",
+          "mediaAltText": "AI Automation Insight"
+        }
+      },
+      "id": "14",
+      "name": "Post to X",
+      "type": "n8n-nodes-base.twitter",
+      "typeVersion": 2,
+      "position": [2660, 200],
+      "credentials": {
+        "twitterOAuth1Api": {
+          "id": "twitter-placeholder",
+          "name": "X (Twitter)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "text": "={{ $json.linkedinText }}\n\nRead more: {{ $json.link }}",
+        "additionalFields": {
+          "imageUrl": "={{ $json.data?.[0]?.url }}",
+          "visibility": "PUBLIC"
+        }
+      },
+      "id": "15",
+      "name": "Post to LinkedIn",
+      "type": "n8n-nodes-base.linkedin",
+      "typeVersion": 1,
+      "position": [2660, 400],
+      "credentials": {
+        "linkedinOAuth2Api": {
+          "id": "linkedin-placeholder",
+          "name": "LinkedIn"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "=Posted to X & LinkedIn: {{ $json.title }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "16",
+      "name": "Set Status",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2880, 300]
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [[
+        {"node": "RSS Feed 1", "type": "main", "index": 0},
+        {"node": "RSS Feed 2", "type": "main", "index": 0}
+      ]]
+    },
+    "RSS Feed 1": {
+      "main": [[{"node": "Merge RSS", "type": "main", "index": 0}]]
+    },
+    "RSS Feed 2": {
+      "main": [[{"node": "Merge RSS", "type": "main", "index": 1}]]
+    },
+    "Merge RSS": {
+      "main": [[{"node": "Pre-Process", "type": "main", "index": 0}]]
+    },
+    "Pre-Process": {
+      "main": [[{"node": "OpenAI Score", "type": "main", "index": 0}]]
+    },
+    "OpenAI Score": {
+      "main": [[{"node": "Extract Score", "type": "main", "index": 0}]]
+    },
+    "Extract Score": {
+      "main": [[{"node": "IF Filter (Score >=7)", "type": "main", "index": 0}]]
+    },
+    "IF Filter (Score >=7)": {
+      "main": [
+        [
+          {"node": "OpenAI Generate Text", "type": "main", "index": 0},
+          {"node": "OpenAI Generate Image", "type": "main", "index": 0}
+        ],
+        [{"node": "Set Status", "type": "main", "index": 0}]
+      ]
+    },
+    "OpenAI Generate Text": {
+      "main": [[{"node": "Extract Post Text", "type": "main", "index": 0}]]
+    },
+    "Extract Post Text": {
+      "main": [[{"node": "Merge Text & Image", "type": "main", "index": 0}]]
+    },
+    "OpenAI Generate Image": {
+      "main": [[{"node": "Merge Text & Image", "type": "main", "index": 1}]]
+    },
+    "Merge Text & Image": {
+      "main": [[{"node": "Split In Batches", "type": "main", "index": 0}]]
+    },
+    "Split In Batches": {
+      "main": [[
+        {"node": "Post to X", "type": "main", "index": 0},
+        {"node": "Post to LinkedIn", "type": "main", "index": 0}
+      ]]
+    },
+    "Post to X": {
+      "main": [[{"node": "Set Status", "type": "main", "index": 0}]]
+    },
+    "Post to LinkedIn": {
+      "main": [[{"node": "Set Status", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-02T00:00:00.000Z",
+  "versionId": 1
+}
