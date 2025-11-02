@@ -1,0 +1,171 @@
+{
+  "name": "RSS to Sheets - Simple Working Version",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a1b2c3d4-0001",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://hnrss.org/frontpage",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0002",
+      "name": "Get RSS",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Take first 3 items and clean data\nconst cleaned = items.slice(0, 3).map(item => {\n  return {\n    json: {\n      title: item.json.title || 'No title',\n      summary: item.json.description || item.json.contentSnippet || 'No summary',\n      link: item.json.link || '',\n      pubDate: item.json.pubDate || new Date().toISOString(),\n      feed: 'Hacker News'\n    }\n  };\n});\n\nreturn cleaned;"
+      },
+      "id": "a1b2c3d4-0003",
+      "name": "Clean Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "text",
+        "operation": "message",
+        "text": "=Rate this article's relevance to AI and automation from 0-10. Respond with ONLY a single number.\n\nTitle: {{ $json.title }}\nSummary: {{ $json.summary }}",
+        "options": {
+          "maxTokens": 10,
+          "temperature": 0.1
+        }
+      },
+      "id": "a1b2c3d4-0004",
+      "name": "AI Score",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.4,
+      "position": [850, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{ $credentials.openAiApi.id }}",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse AI score and combine with original data\nconst result = [];\nconst origData = $('Clean Data').all();\n\nfor (let i = 0; i < items.length; i++) {\n  const aiResponse = items[i].json.message?.content || items[i].json.text || '0';\n  const score = parseInt(aiResponse.trim(), 10) || 0;\n  \n  result.push({\n    json: {\n      ...origData[i].json,\n      score: Math.max(0, Math.min(10, score)),\n      timestamp: new Date().toISOString()\n    }\n  });\n}\n\nreturn result;"
+      },
+      "id": "a1b2c3d4-0005",
+      "name": "Add Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1j4_BlQAkrNhkijEBLL48nGJ6aEVzeyRy23_zuCFiqAc",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.timestamp }}",
+            "Title": "={{ $json.title }}",
+            "Link": "={{ $json.link }}",
+            "Score": "={{ $json.score }}",
+            "Feed": "={{ $json.feed }}",
+            "Summary": "={{ $json.summary }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0006",
+      "name": "Save to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1250, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "{{ $credentials.googleSheetsOAuth2Api.id }}",
+          "name": "Google Sheets Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get RSS": {
+      "main": [
+        [
+          {
+            "node": "Clean Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Data": {
+      "main": [
+        [
+          {
+            "node": "AI Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Score": {
+      "main": [
+        [
+          {
+            "node": "Add Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Score": {
+      "main": [
+        [
+          {
+            "node": "Save to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-02T00:00:00.000Z",
+  "versionId": 1
+}
