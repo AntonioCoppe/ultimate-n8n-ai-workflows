@@ -1,0 +1,571 @@
+{
+  "name": "Job Hunt Co-Pilot: Dynamic Sites, Score & Outreach",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "1",
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "YOUR_SHEETS_ID",
+        "sheetName": "=Career Sites",
+        "range": "A:C",
+        "options": {
+          "valueRenderMode": "UNFORMATTED_VALUE"
+        }
+      },
+      "id": "2",
+      "name": "Read Search Configs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "gsheets-placeholder",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect search terms from sheet rows\nreturn [\n  {\n    json: {\n      search_terms: $input.all().map(item => item.json.search_term).filter(Boolean),\n      location: $input.first().json.location || 'Remote',\n      country: $input.first().json.country || 'United States'\n    }\n  }\n];"
+      },
+      "id": "3",
+      "name": "Set Apify Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.apify.com/v2/acts/jpraRc4MCUh5ehbHV/run-sync-get-dataset-items?token=YOUR_APIFY_TOKEN",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "max_results",
+              "value": 50
+            },
+            {
+              "name": "posted_since",
+              "value": "1 day"
+            },
+            {
+              "name": "country",
+              "value": "={{ $json.country }}"
+            },
+            {
+              "name": "location",
+              "value": "={{ $json.location }}"
+            },
+            {
+              "name": "search_terms",
+              "value": "={{ $json.search_terms }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "4",
+      "name": "Fetch Jobs via Apify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Apify response (assume body is array of jobs)\nconst jobs = $input.first().json.body || [];\nconst now = new Date();\nconst twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);\nconst keyword = 'software engineer'; // Customize\nreturn jobs.filter(job => {\n  const posted = new Date(job.posted_date || job.timestamp);\n  return posted > twentyFourHoursAgo && (job.title.toLowerCase().includes(keyword.toLowerCase()) || job.description.toLowerCase().includes(keyword.toLowerCase()));\n}).map(job => ({\n  json: {\n    title: job.title,\n    company: job.company_name,\n    description: job.description,\n    link: job.url || job.job_url,\n    location: job.location,\n    platform: job.platform,\n    posted_date: job.posted_date\n  }\n}));"
+      },
+      "id": "5",
+      "name": "Filter Fresh & Keywords",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "download",
+        "fileId": "YOUR_RESUME_FILE_ID",
+        "options": {}
+      },
+      "id": "6",
+      "name": "Load Resume",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3.2,
+      "position": [1340, 300],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "gdrive-placeholder",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Assume resume is text; extract text (for PDF, add OCR or assume pre-text)\nconst resumeBuffer = $input.first().binary.data;\nconst resumeText = resumeBuffer.toString('utf8'); // Simple for text\nreturn items.map(item => ({\n  json: {\n    ...item.json,\n    resumeText\n  }\n}));"
+      },
+      "id": "7",
+      "name": "Extract Resume Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "openAiApi",
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Score job-resume fit 0-100 based on skills, experience. Output ONLY: Score: [num]|Keywords: [comma list]|Gaps: [brief]"
+            },
+            {
+              "role": "user",
+              "content": "=Resume: {{ $json.resumeText }}\nJob: {{ $json.title }} at {{ $json.company }}\nDesc: {{ $json.description }}\nScore:"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 100,
+          "temperature": 0.3
+        }
+      },
+      "id": "8",
+      "name": "OpenAI Score Fit",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.1,
+      "position": [1780, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-placeholder",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const response = item.json;\n  let score = 0, keywords = [], gaps = '';\n  if (response.choices && response.choices[0].message.content) {\n    const content = response.choices[0].message.content;\n    const scoreMatch = content.match(/Score:\s*(\\d+)/);\n    const kwMatch = content.match(/Keywords:\s*\\[(.?)\\]/) || content.match(/Keywords:\s(.+)/);\n    const gapMatch = content.match(/Gaps:\s*(.+)/);\n    score = parseInt(scoreMatch ? scoreMatch[1] : 0);\n    keywords = (kwMatch ? kwMatch[1] : '').split(',').map(k => k.trim());\n    gaps = gapMatch ? gapMatch[1].trim() : '';\n  }\n  const job = $input.all()[items.length - 1].json; // Previous job data\n  return { json: { ...job, score, keywords: keywords.join(','), gaps } };\n});"
+      },
+      "id": "9",
+      "name": "Extract Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "YOUR_SHEETS_ID",
+        "sheetName": "=Scored Jobs",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "title": "={{ $json.title }}",
+            "company": "={{ $json.company }}",
+            "link": "={{ $json.link }}",
+            "score": "={{ $json.score }}",
+            "keywords": "={{ $json.keywords }}",
+            "gaps": "={{ $json.gaps }}",
+            "platform": "={{ $json.platform }}",
+            "timestamp": "={{ new Date().toISOString() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "10",
+      "name": "Log Scored Jobs to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [2220, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "gsheets-placeholder",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.score }}",
+              "rightValue": 70,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ]
+        }
+      },
+      "id": "11",
+      "name": "IF High Match (>=70)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "user_profile",
+              "value": "={\"name\": \"Your Name\", \"likes\": \"AI automation, hiking, open-source projects\", \"skills\": \"Python, n8n, OpenAI integrations\"}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "12",
+      "name": "Set User Profile",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [2660, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.linkedin.com/search/results/people/?keywords=recruiter%20{{ $json.company }}%20software&origin=SWITCH_SEARCH_VERTICAL",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "keywords",
+              "value": "=recruiter {{ $json.company }} software engineer"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "13",
+      "name": "Hunt Recruiters (LinkedIn Search)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2660, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Simple HTML parse for top 3 names (use regex; for prod, add Cheerio via npm but n8n Code is limited)\nconst html = $input.first().json.body;\nconst nameMatches = (html.match(/data-name=\"([^\"]+)\"/g) || []).slice(0,3).map(m => m.replace(/data-name=/, '').replace(/\"/g, ''));\nconst recruiters = nameMatches.length ? nameMatches.join(', ') : 'No recruiters found';\nreturn [{ json: { recruiters } }];"
+      },
+      "id": "14",
+      "name": "Extract Recruiters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 400]
+    },
+    {
+      "parameters": {
+        "authentication": "openAiApi",
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Draft personalized cold outreach message for LinkedIn InMail. Make it concise (200 words), reference my profile ({{ $json.user_profile }}), my likes/skills, the company's work from job desc, and job fit. Output ONLY: Message: [text]"
+            },
+            {
+              "role": "user",
+              "content": "=User: {{ $('Set User Profile').item.json.user_profile }}\nJob: {{ $json.title }} at {{ $json.company }}\nDesc: {{ $json.description }} (what they do: infer from desc)\nRecruiters: {{ $json.recruiters }}\nDraft message:"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 300,
+          "temperature": 0.7
+        }
+      },
+      "id": "15",
+      "name": "OpenAI Outreach Draft",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.1,
+      "position": [3100, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-placeholder",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nlet message = '';\nif (response.choices && response.choices[0].message.content) {\n  message = response.choices[0].message.content.replace(/Message:\\s*/i, '').trim();\n}\nconst prev = $('IF High Match (>=70)').item.json;\nconst recruitersData = $('Extract Recruiters').item.json;\nreturn [{ \n  json: { \n    ...prev, \n    message, \n    recruiters: recruitersData.recruiters \n  } \n}];"
+      },
+      "id": "16",
+      "name": "Combine Outreach",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3320, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "YOUR_SHEETS_ID",
+        "sheetName": "=High Matches Outreach",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "title": "={{ $json.title }}",
+            "company": "={{ $json.company }}",
+            "link": "={{ $json.link }}",
+            "score": "={{ $json.score }}",
+            "recruiters": "={{ $json.recruiters }}",
+            "outreach_message": "={{ $json.message }}",
+            "timestamp": "={{ new Date().toISOString() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "17",
+      "name": "Log High Matches to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [3540, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "gsheets-placeholder",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "your@email.com",
+        "toEmail": "your@email.com",
+        "subject": "=High-Match Job Alert: {{ $json.title }} at {{ $json.company }} (Score: {{ $json.score }})",
+        "text": "=Quick apply: {{ $json.link }}\n\nOutreach to recruiters ({{ $json.recruiters }}):\n{{ $json.message }}\n\nFrom: {{ $json.platform }}",
+        "options": {}
+      },
+      "id": "18",
+      "name": "Email Notification",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [3760, 300],
+      "credentials": {
+        "smtp": {
+          "id": "email-placeholder",
+          "name": "Email"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read Search Configs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Search Configs": {
+      "main": [
+        [
+          {
+            "node": "Set Apify Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Apify Input": {
+      "main": [
+        [
+          {
+            "node": "Fetch Jobs via Apify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Jobs via Apify": {
+      "main": [
+        [
+          {
+            "node": "Filter Fresh & Keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Fresh & Keywords": {
+      "main": [
+        [
+          {
+            "node": "Load Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Resume": {
+      "main": [
+        [
+          {
+            "node": "Extract Resume Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Resume Text": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Score Fit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Score Fit": {
+      "main": [
+        [
+          {
+            "node": "Extract Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Score": {
+      "main": [
+        [
+          {
+            "node": "Log Scored Jobs to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Scored Jobs to Sheet": {
+      "main": [
+        [
+          {
+            "node": "IF High Match (>=70)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF High Match (>=70)": {
+      "main": [
+        [
+          {
+            "node": "Set User Profile",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Set User Profile": {
+      "main": [
+        [
+          {
+            "node": "Hunt Recruiters (LinkedIn Search)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hunt Recruiters (LinkedIn Search)": {
+      "main": [
+        [
+          {
+            "node": "Extract Recruiters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Recruiters": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Outreach Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Outreach Draft": {
+      "main": [
+        [
+          {
+            "node": "Combine Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Outreach": {
+      "main": [
+        [
+          {
+            "node": "Log High Matches to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log High Matches to Sheet": {
+      "main": [
+        [
+          {
+            "node": "Email Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": 1
+}
