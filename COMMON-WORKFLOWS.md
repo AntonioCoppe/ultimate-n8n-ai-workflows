@@ -40,6 +40,11 @@ Quick reference guide for the most popular automation patterns in this repositor
 **Pattern**: RSS/News Feed → AI Summarize → Format → Post to Social
 **Use Case**: Auto-post curated content
 
+### RSS to Social AI Automation
+**File**: `automation/rss-to-social-ai-automation/`
+**Pattern**: Cron → Multiple RSS Feeds → AI Scoring → AI Generate Text & Image → Post to X & LinkedIn
+**Use Case**: Automated content curation with AI-powered scoring, text generation, and image creation for multi-platform social media posting
+
 ---
 
 ## 🗂️ Data Processing & Integration
@@ -222,12 +227,13 @@ find workflows -name "*webhook*"
 
 1. **AI Email Responder** - Automate customer support
 2. **Content Generator** - Create blog posts, social content
-3. **Data Sync** - Keep tools in sync automatically
-4. **Web Scraper** - Monitor prices, news, competitors
-5. **Chatbot** - Build conversational AI
-6. **Form Handler** - Process form submissions
-7. **Report Generator** - Daily/weekly reports
-8. **Alert System** - Monitor and notify
+3. **RSS to Social AI Automation** - Auto-curate and post to X/LinkedIn with AI
+4. **Data Sync** - Keep tools in sync automatically
+5. **Web Scraper** - Monitor prices, news, competitors
+6. **Chatbot** - Build conversational AI
+7. **Form Handler** - Process form submissions
+8. **Report Generator** - Daily/weekly reports
+9. **Alert System** - Monitor and notify
 
 ---
 
